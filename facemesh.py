@@ -35,7 +35,7 @@ Usage (once filled in):
 """
 
 from typing import Optional, Tuple
-from math import atan2, pi
+from math import atan2, pi, degrees
 
 import cv2
 import numpy as np
@@ -145,7 +145,7 @@ class FaceMeshEstimator:
         right_x_coord, right_y_coord = keypoints[RIGHT_EYE_KP_INDEX]
         left_x_coord, left_y_coord = keypoints[LEFT_EYE_KP_INDEX]
 
-        angle = atan2(-(right_y_coord-left_y_coord), right_x_coord-left_x_coord)
+        angle = atan2(-(left_y_coord - right_y_coord), left_x_coord - right_x_coord)
         rotation = TARGET_ANGLE_RAD - angle
         return _normalize_radians(rotation)
 
@@ -160,41 +160,25 @@ class FaceMeshEstimator:
 
 
     def _warp_crop(self, frame_bgr: np.ndarray, roi: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Builds the affine transform that maps the rotated square ROI in
-        the original frame to a CROP_SIZE x CROP_SIZE axis-aligned crop, and
-        applies it with cv2.warpAffine.
+        scale = CROP_SIZE/roi["size"]
+        angle_deg = degrees(roi["rotation"])
 
-        Returns (crop, affine_matrix) -- keep affine_matrix, you'll need to
-        invert it in _inverse_transform to map landmarks back.
-        """
-        raise NotImplementedError(
-            "TODO: build a 2x3 matrix (e.g. via cv2.getRotationMatrix2D "
-            "around roi center, then adjust scale/translation so the roi's "
-            "`size` square lands exactly on a CROP_SIZE x CROP_SIZE output), "
-            "then cv2.warpAffine(frame_bgr, matrix, (CROP_SIZE, CROP_SIZE))."
-        )
+        matrix = cv2.getRotationMatrix2D((roi["cx"], roi["cy"]), angle_deg, scale)
+        matrix[0, 2] += CROP_SIZE/2 - roi["cx"]
+        matrix[1, 2] += CROP_SIZE/2 - roi["cy"]
+
+        crop = cv2.warpAffine(frame_bgr, matrix, (CROP_SIZE, CROP_SIZE), borderMode=cv2.BORDER_REPLICATE)
+        return crop, matrix
 
     def _reshape_landmarks(self, raw_landmarks: np.ndarray) -> np.ndarray:
-        """Reshapes the flat model output into (NUM_LANDMARKS, 3) and scales
-        from crop-pixel space into normalized [0, 1] crop space (divide by
-        CROP_SIZE), matching the convention _inverse_transform expects.
-        """
-        raise NotImplementedError(
-            "TODO: raw_landmarks.reshape(NUM_LANDMARKS, 3) then divide the "
-            "x, y (and possibly z, per your notes) by CROP_SIZE -- confirm "
-            "the model actually outputs pixel-in-crop-space coords and not "
-            "already-normalized ones."
-        )
+        landmarks = raw_landmarks.reshape(-1, 3)
+        return landmarks/CROP_SIZE
+
 
     def _inverse_transform(self, landmarks: np.ndarray, affine_matrix: np.ndarray) -> np.ndarray:
-        """Maps normalized crop-space (x, y) landmarks back into the
-        original frame's pixel coordinates by inverting affine_matrix from
-        _warp_crop -- the counterpart to _remove_letterbox in blazeface.py,
-        but for a rotated affine warp instead of a simple padded-square
-        letterbox.
-        """
-        raise NotImplementedError(
-            "TODO: cv2.invertAffineTransform(affine_matrix), then apply it "
-            "to landmarks[:, :2] * CROP_SIZE (undoing the normalization from "
-            "_reshape_landmarks) to get original-frame pixel coords."
-        )
+        inv_matrix = cv2.invertAffineTransform(affine_matrix)
+        xy_crop_px = landmarks[:, :2] * CROP_SIZE
+        ones = np.ones((xy_crop_px.shape[0], 1), dtype=xy_crop_px.dtype)
+        homogeneous = np.hstack([xy_crop_px, ones])
+        
+        return homogeneous @ inv_matrix.T
