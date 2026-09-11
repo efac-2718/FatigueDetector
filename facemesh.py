@@ -38,7 +38,7 @@ def _normalize_radians(angle: float) -> float:
 class FaceMeshEstimator:
     """Runs face_landmark.tflite directly with manual rotation-correction crop/warp."""
 
-    def __init__(self, model_path: str, min_face_score: float = MIN_FACE_SCORE, normalize_minus1_to_1: bool = False):
+    def __init__(self, model_path: str, min_face_score: float = MIN_FACE_SCORE):
         self.interpreter = Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
 
@@ -48,7 +48,6 @@ class FaceMeshEstimator:
         self.input_index = input_details[0]["index"]
         self.input_size = input_details[0]["shape"][1]
         self.min_face_score = min_face_score
-        self.normalize_minus1_to_1 = normalize_minus1_to_1
 
         self.landmarks_index = None
         self.face_flag_index = None
@@ -70,14 +69,11 @@ class FaceMeshEstimator:
         roi = self._make_square_roi(detection["bbox"], rotation)
         crop, affine_matrix = self._warp_crop(frame_bgr, roi)
 
-        # Convert BGR to RGB
+        # face_landmark.tflite expects RGB, [0, 1] -- confirmed against real
+        # snapshots (test_norm01 landmarks land on the face correctly;
+        # test_norm11's [-1, 1] variant did not).
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32)
-
-        # Normalization: [0, 1] vs [-1, 1]
-        if self.normalize_minus1_to_1:
-            tensor = (crop_rgb / 127.5) - 1.0
-        else:
-            tensor = crop_rgb / 255.0
+        tensor = crop_rgb / 255.0
 
         self.interpreter.set_tensor(self.input_index, tensor[np.newaxis])
         self.interpreter.invoke()

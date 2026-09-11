@@ -70,14 +70,13 @@ def main():
     parser.add_argument("--detector", default="detector.tflite", help="Path to detector tflite")
     parser.add_argument("--landmark", default="face_landmark.tflite", help="Path to landmark tflite")
     parser.add_argument("--input", default="0", help="Webcam ID (e.g. 0) or path to video file")
-    parser.add_argument("--output", default="test_norm01.mp4", help="Output MP4 file path")
+    parser.add_argument("--output", default="output.mp4", help="Output MP4 file path")
     parser.add_argument("--rpicam", action="store_true", help="Use rpicam-vid (Raspberry Pi only)")
     parser.add_argument("--show", action="store_true", help="Display live window with OpenCV")
-    parser.add_argument("--normalize_minus1", action="store_true", help="Use [-1, 1] normalization instead of [0, 1]")
     args = parser.parse_args()
 
     detector = BlazeFaceDetector(args.detector)
-    mesh = FaceMeshEstimator(args.landmark, normalize_minus1_to_1=args.normalize_minus1)
+    mesh = FaceMeshEstimator(args.landmark)
 
     if args.rpicam:
         cap = RpicamCapture(width=640, height=480)
