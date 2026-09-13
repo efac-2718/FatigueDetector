@@ -147,7 +147,7 @@ class BlazeFaceDetector:
     task library involved."""
 
     def __init__(self, model_path: str):
-        self.interpreter = Interpreter(model_path=model_path)
+        self.interpreter = Interpreter(model_path=model_path, num_threads=2)
         self.interpreter.allocate_tensors()
 
         input_details = self.interpreter.get_input_details()

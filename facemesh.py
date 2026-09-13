@@ -39,7 +39,7 @@ class FaceMeshEstimator:
     """Runs face_landmark.tflite directly with manual rotation-correction crop/warp."""
 
     def __init__(self, model_path: str, min_face_score: float = MIN_FACE_SCORE):
-        self.interpreter = Interpreter(model_path=model_path)
+        self.interpreter = Interpreter(model_path=model_path, num_threads=2)
         self.interpreter.allocate_tensors()
 
         input_details = self.interpreter.get_input_details()
