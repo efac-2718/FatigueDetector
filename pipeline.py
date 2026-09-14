@@ -11,6 +11,8 @@ import numpy as np
 
 from blazeface import BlazeFaceDetector
 from facemesh import FaceMeshEstimator
+from threaded_capture import LatestFrameReader
+from profiler import StageProfiler
 
 
 class StandardCapture:
@@ -73,15 +75,25 @@ def main():
     parser.add_argument("--output", default="output.mp4", help="Output MP4 file path")
     parser.add_argument("--rpicam", action="store_true", help="Use rpicam-vid (Raspberry Pi only)")
     parser.add_argument("--show", action="store_true", help="Display live window with OpenCV")
+    parser.add_argument(
+        "--profile", type=int, default=0,
+        help="Print a stage-timing report every N frames (0 = off)"
+    )
     args = parser.parse_args()
 
     detector = BlazeFaceDetector(args.detector)
     mesh = FaceMeshEstimator(args.landmark)
 
     if args.rpicam:
-        cap = RpicamCapture(width=640, height=480)
+        raw_capture = RpicamCapture(width=640, height=480)
     else:
-        cap = StandardCapture(args.input)
+        raw_capture = StandardCapture(args.input)
+
+    # LatestFrameReader runs raw_capture.read() on a background thread and
+    # always hands back the freshest frame -- so a slow inference stage
+    # skips stale frames instead of backing up the capture pipe.
+    cap = LatestFrameReader(raw_capture).start()
+    profiler = StageProfiler()
 
     writer = None
     print(f"Starting pipeline. Saving to {args.output}. Press Ctrl+C or 'q' to stop.")
@@ -90,9 +102,12 @@ def main():
 
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                break
+            profiler.start_frame()
+
+            with profiler.stage("capture"):
+                frame = cap.get_latest(timeout=1.0)
+            if frame is None:
+                continue  # no new frame yet -- try again rather than exiting
 
             h, w = frame.shape[:2]
             if writer is None:
@@ -103,9 +118,12 @@ def main():
                     (w, h)
                 )
 
-            detections = detector.detect(frame)
+            with profiler.stage("blazeface"):
+                detections = detector.detect(frame)
+
             for det in detections:
-                landmarks = mesh.estimate(frame, det)
+                with profiler.stage("facemesh"):
+                    landmarks = mesh.estimate(frame, det)
                 if landmarks is None:
                     continue
 
@@ -117,6 +135,7 @@ def main():
                 for x, y in landmarks[:, :2].astype(int):
                     cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
 
+            profiler.end_frame()
             writer.write(frame)
             frame_count += 1
 
@@ -129,10 +148,14 @@ def main():
                 fps = frame_count / (time.time() - start_time)
                 print(f"Processed {frame_count} frames (~{fps:.2f} FPS)...")
 
+            if args.profile and frame_count % args.profile == 0:
+                profiler.report()
+
     except KeyboardInterrupt:
         print("Stopping capture...")
     finally:
-        cap.release()
+        cap.stop()
+        raw_capture.release()
         if writer:
             writer.release()
         cv2.destroyAllWindows()
